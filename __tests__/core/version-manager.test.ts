@@ -45,6 +45,13 @@ describe('Version Management', () => {
       expect(result).toBe(false);
     }, 30000);
 
+    it('should return false for legacy obfuscated versions without client_mappings metadata', async () => {
+      const versionManager = getVersionManager();
+      // Early 1.14.x versions can omit client_mappings while still being obfuscated.
+      const result = await versionManager.isVersionUnobfuscated('1.14.3');
+      expect(result).toBe(false);
+    }, 30000);
+
     it('should return true for unobfuscated versions (26.1+)', async () => {
       const versionManager = getVersionManager();
       // 26.1 snapshots ship without obfuscation - no client_mappings in version JSON

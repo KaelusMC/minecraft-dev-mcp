@@ -8,6 +8,12 @@ import { logger } from '../utils/logger.js';
  * Manages Minecraft versions - downloading, caching, and metadata
  */
 export class VersionManager {
+  /**
+   * First known unobfuscated Minecraft build.
+   * 26.1-snapshot-1 released at this timestamp and removed client obfuscation.
+   */
+  private static readonly UNOBFUSCATED_CUTOFF_MS = Date.parse('2025-12-16T12:42:29+00:00');
+
   private downloader = getMojangDownloader();
   private cache = getCacheManager();
 
@@ -148,10 +154,27 @@ export class VersionManager {
    * Starting with Minecraft 26.1 snapshots, Mojang stopped obfuscating the
    * client JAR. These versions have no `client_mappings` entry in their
    * version JSON because there is nothing to reverse-map.
+   *
+   * Important: some older obfuscated versions (e.g. early 1.14.x) also lack
+   * `client_mappings` metadata, so missing metadata alone is not sufficient.
    */
   async isVersionUnobfuscated(version: string): Promise<boolean> {
     const versionJson = await this.downloader.getVersionJson(version);
-    return !versionJson.downloads.client_mappings;
+    if (versionJson.downloads.client_mappings) {
+      return false;
+    }
+
+    // Early 1.14.x releases can be missing client_mappings metadata while still obfuscated.
+    // Treat versions as unobfuscated only after the known 26.1 cutover and only for modern ids.
+    const releaseTimeMs = Date.parse(versionJson.releaseTime);
+    const isAfterUnobfuscatedCutover =
+      Number.isFinite(releaseTimeMs) && releaseTimeMs >= VersionManager.UNOBFUSCATED_CUTOFF_MS;
+
+    const modernVersionId = /^(\d+)\.(\d+)(?:\.\d+)?(?:-snapshot-\d+)?$/.exec(versionJson.id);
+    const modernMajor = modernVersionId ? Number.parseInt(modernVersionId[1], 10) : Number.NaN;
+    const isModernUnobfuscatedSeries = Number.isFinite(modernMajor) && modernMajor >= 26;
+
+    return isAfterUnobfuscatedCutover && isModernUnobfuscatedSeries;
   }
 
   /**
