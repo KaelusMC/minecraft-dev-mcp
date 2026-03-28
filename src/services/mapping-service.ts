@@ -11,6 +11,7 @@ import { MappingNotFoundError } from '../utils/errors.js';
 import { ensureDir } from '../utils/file-utils.js';
 import { logger } from '../utils/logger.js';
 import { getMojmapTinyPath } from '../utils/paths.js';
+import { getVersionManager } from './version-manager.js';
 
 /**
  * Manages mapping downloads and caching
@@ -19,6 +20,7 @@ export class MappingService {
   private mojangDownloader = getMojangDownloader();
   private fabricMaven = getFabricMaven();
   private cache = getCacheManager();
+  private versionManager = getVersionManager();
 
   // Lock to prevent concurrent downloads of the same mappings
   private downloadLocks = new Map<string, Promise<string>>();
@@ -28,6 +30,25 @@ export class MappingService {
    * Uses locking to prevent concurrent downloads of the same mapping
    */
   async getMappings(version: string, mappingType: MappingType): Promise<string> {
+    // Unobfuscated versions (26.1+) ship without obfuscation — no mapping files exist.
+    const isUnobfuscated = await this.versionManager.isVersionUnobfuscated(version);
+    if (isUnobfuscated) {
+      if (mappingType === 'mojmap') {
+        throw new MappingNotFoundError(
+          version,
+          mappingType,
+          `Mojmap mapping files are not available for unobfuscated version ${version}. ` +
+            `The JAR is already in Mojang's human-readable names — decompile it directly with mapping 'mojmap'.`,
+        );
+      }
+      throw new MappingNotFoundError(
+        version,
+        mappingType,
+        `${mappingType} mappings are not available for unobfuscated version ${version}. ` +
+          `Use 'mojmap' mapping instead — the JAR ships without obfuscation.`,
+      );
+    }
+
     const lockKey = `${version}-${mappingType}`;
 
     // For Mojmap, check for converted Tiny file first (not raw ProGuard)
@@ -265,6 +286,17 @@ export class MappingService {
     // Same mapping type - no translation needed
     if (sourceMapping === targetMapping) {
       return this.createLookupResult(true, symbol, symbol);
+    }
+
+    // Unobfuscated versions (26.1+) have no mapping files — lookups are not possible.
+    const isUnobfuscated = await this.versionManager.isVersionUnobfuscated(version);
+    if (isUnobfuscated) {
+      throw new MappingNotFoundError(
+        version,
+        `${sourceMapping}->${targetMapping}`,
+        `Mapping lookup is not available for unobfuscated version ${version}. ` +
+          `The source code is already in Mojang's human-readable names — no mapping translation is needed.`,
+      );
     }
 
     // Determine routing strategy
